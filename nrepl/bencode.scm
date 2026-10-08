@@ -17,14 +17,18 @@
           scm->bencode
           bencode->scm)
 
-  (import (scheme base)
-          (srfi 1))
-
   ;; Guile-specific imports for sorting
   (cond-expand
    (guile
-    (import (only (rnrs sorting)
-                  list-sort)))
+    (import (scheme base)
+            (srfi 1)
+            (only (rnrs sorting) list-sort)))
+   (gauche
+     (import (scheme base)
+             (srfi 1)
+             (srfi 95))
+     (begin
+       (define (list-sort cmp ls) (sort ls cmp))))
    (else
     (error "Unsupported Scheme implementation")))
 
