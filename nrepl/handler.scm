@@ -4,26 +4,16 @@
 
 (define-library (nrepl handler)
   (export handle-request
-          nrepl-version
-          guile-nrepl-version)
+          nrepl-version)
 
   (import (scheme base)
-          (scheme write)
-          (srfi 1)
           (nrepl session)
-          (nrepl eval))
-
-  (cond-expand
-   (guile
-    (import (only (guile)
-                  getcwd
-                  %load-path
-                  version))))
+          (nrepl eval)
+          (nrepl runtime))
 
   (begin
 
     (define nrepl-version "0.1.0")
-    (define guile-nrepl-version "0.1.0")
 
     ;; Helper to get value from alist
     (define (alist-get key alist default)
@@ -91,8 +81,8 @@
                                (cons "lookup" '()))
                         "versions" (list
                                     (cons "nrepl" (list (cons "version-string" nrepl-version)))
-                                    (cons "guile" (list (cons "version-string" (version))))
-                                    (cons "guile-nrepl" (list (cons "version-string" guile-nrepl-version)))))
+                                    (cons runtime-name (list (cons "version-string" runtime-version)))
+                                    (cons (string-append runtime-name "-nrepl") (list (cons "version-string" nrepl-impl-version)))))
          "done")))
 
     (define (handle-classpath manager request)
@@ -101,9 +91,7 @@
              (sess-id (alist-get "session" request #f)))
         (with-status
          (make-response id sess-id
-                        "classpath" (delete-duplicates
-                                     (cons (getcwd) %load-path)
-                                     string=?))
+                        "classpath" (runtime-load-paths))
          "done")))
 
     (define (handle-ls-sessions manager request)
