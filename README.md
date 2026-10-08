@@ -1,6 +1,8 @@
 # nrepl-scm
 Network REPL for Guile or Gauche.
 
+It uses the same protocol as [Clojure nREPL](https://nrepl.org/nrepl/index.html).
+
 ## usage
 ```sh
 ./nrepl-scm guile
