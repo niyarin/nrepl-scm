@@ -1,9 +1,13 @@
 # nrepl-scm
-Network REPL for Guile.
+Network REPL for Guile or Gauche.
 
 ## usage
 ```sh
-guile -L . -e main boot.scm
+guile -L . boot.scm
+```
+
+```sh
+gosh -I . boot.scm
 ```
 
 ## test
