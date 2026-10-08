@@ -22,12 +22,13 @@
                   current-module
                   set-current-module
                   current-error-port
-                  format
-                  call-with-output-string
+                  format call-with-output-string
                   call-with-input-string
                   with-exception-handler
                   interaction-environment
                   *unspecified*
+                  getcwd
+                  %load-path
                   version))))
 
   (begin
@@ -92,6 +93,7 @@
                         "ops" (list
                                (cons "clone" '())
                                (cons "close" '())
+                               (cons "classpath" '())
                                (cons "describe" '())
                                (cons "eval" '())
                                (cons "load-file" '())
@@ -102,6 +104,17 @@
                                     (cons "nrepl" (list (cons "version-string" nrepl-version)))
                                     (cons "guile" (list (cons "version-string" (version))))
                                     (cons "guile-nrepl" (list (cons "version-string" guile-nrepl-version)))))
+         "done")))
+
+    (define (handle-classpath manager request)
+      "Handle 'classpath' op - return paths Guile uses to find source files."
+      (let* ((id (alist-get "id" request #f))
+             (sess-id (alist-get "session" request #f)))
+        (with-status
+         (make-response id sess-id
+                        "classpath" (delete-duplicates
+                                     (cons (getcwd) %load-path)
+                                     string=?))
          "done")))
 
     (define (handle-ls-sessions manager request)
@@ -219,6 +232,7 @@
         (cond
          ((equal? op "clone") (handle-clone manager request))
          ((equal? op "close") (handle-close manager request))
+         ((equal? op "classpath") (handle-classpath manager request))
          ((equal? op "describe") (handle-describe manager request))
          ((equal? op "ls-sessions") (handle-ls-sessions manager request))
          ((equal? op "eval") (handle-eval manager request))
