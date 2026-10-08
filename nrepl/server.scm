@@ -1,4 +1,4 @@
-;;; server.scm -- nREPL server for Guile
+;;; server.scm -- nREPL server
 ;;;
 ;;; SPDX-License-Identifier: MIT
 
@@ -12,37 +12,11 @@
   (import (scheme base)
           (scheme write)
           (scheme file)
-          (srfi 1)
+          (srfi 18)
           (nrepl bencode)
           (nrepl session)
-          (nrepl handler))
-
-  (cond-expand
-   (guile
-    (import (only (guile)
-                  socket
-                  bind
-                  listen
-                  accept
-                  close-port
-                  setsockopt
-                  getsockname
-                  current-output-port
-                  current-error-port
-                  with-exception-handler
-                  format
-                  sockaddr:port
-                  file-exists?
-                  delete-file
-                  AF_INET
-                  SOCK_STREAM
-                  SOL_SOCKET
-                  SO_REUSEADDR
-                  INADDR_LOOPBACK)
-            (only (ice-9 threads)
-                  call-with-new-thread)
-            (only (ice-9 binary-ports)
-                  lookahead-u8))))
+          (nrepl handler)
+          (nrepl net))
 
   (begin
 
@@ -57,30 +31,21 @@
       (sessions nrepl-server-sessions set-nrepl-server-sessions!))
 
     (define (make-nrepl-server . args)
-      "Create a new nREPL server.
-Optional keyword arguments:
-  port: Port number (default: 0 for auto-assign)
-  host: Host to bind to (default: 127.0.0.1)"
-      (let ((port (if (and (pair? args) (number? (car args)))
-                      (car args)
-                      0))
+      (let ((port (if (and (pair? args) (number? (car args))) (car args) 0))
             (host "127.0.0.1"))
         (make-nrepl-server-record #f port host #f #f (make-session-manager))))
 
     (define (write-port-file port)
-      "Write .nrepl-port file with the server port."
       (call-with-output-file ".nrepl-port"
         (lambda (out)
           (display port out)
           (newline out))))
 
     (define (delete-port-file)
-      "Delete .nrepl-port file if it exists."
       (when (file-exists? ".nrepl-port")
         (delete-file ".nrepl-port")))
 
     (define (startup-message host port)
-      "Print the nREPL startup message."
       (let ((msg (string-append "nREPL server started on port "
                                 (number->string port)
                                 " on host " host
@@ -90,99 +55,66 @@ Optional keyword arguments:
         msg))
 
     (define (response-alist? obj)
-      "Check if obj is a response alist (not a list of responses)."
       (and (pair? obj)
            (pair? (car obj))
            (string? (caar obj))))
 
-    (define (send-response client-socket response)
-      "Send one or more responses to client."
+    (define (send-response out-port response)
       (cond
        ((response-alist? response)
-        ;; Single response
-        (bencode-write response client-socket))
+        (bencode-write response out-port))
        ((list? response)
-        ;; Multiple responses
-        (for-each (lambda (resp)
-                    (bencode-write resp client-socket))
-                  response))
+        (for-each (lambda (resp) (bencode-write resp out-port)) response))
        (else
-        (bencode-write response client-socket))))
+        (bencode-write response out-port))))
 
-    (define (handle-client server client-socket client-addr)
-      "Handle a single client connection."
-      (with-exception-handler
-          (lambda (exn)
-            (format (current-error-port)
-                    "Error handling client: ~a~%"
-                    exn)
-            #f)
-        (lambda ()
+    (define (handle-client server connection)
+      (let ((in-port  (connection-input-port connection))
+            (out-port (connection-output-port connection)))
+        (guard (exn (#t
+                     (display "Error handling client: " (current-error-port))
+                     (display exn (current-error-port))
+                     (newline (current-error-port))
+                     #f))
           (let loop ()
             (when (nrepl-server-running? server)
-              (let ((byte (lookahead-u8 client-socket)))
+              (let ((byte (peek-u8 in-port)))
                 (unless (eof-object? byte)
-                  (let* ((request (bencode-read client-socket))
-                         (response (handle-request (nrepl-server-sessions server)
-                                                   request)))
-                    (send-response client-socket response)
-                    (loop))))))
-          (close-port client-socket))
-        #:unwind? #t))
+                  (let* ((request  (bencode-read in-port))
+                         (response (handle-request (nrepl-server-sessions server) request)))
+                    (send-response out-port response)
+                    (loop)))))))
+        (connection-close connection)))
 
     (define (accept-loop server)
-      "Main accept loop for the server."
       (let ((sock (nrepl-server-socket server)))
         (let loop ()
           (when (nrepl-server-running? server)
-            (with-exception-handler
-                (lambda (exn)
-                  ;; Server might be shutting down
-                  #f)
-              (lambda ()
-                (let* ((client-pair (accept sock))
-                       (client-socket (car client-pair))
-                       (client-addr (cdr client-pair)))
-                  (call-with-new-thread
-                   (lambda ()
-                     (handle-client server client-socket client-addr))))
-                (loop))
-              #:unwind? #t)))))
+            (guard (exn (#t #f))
+              (let ((conn (tcp-server-accept sock)))
+                (thread-start!
+                 (make-thread (lambda () (handle-client server conn)))))
+              (loop))))))
 
     (define (nrepl-server-start server)
-      "Start the nREPL server."
-      (let ((sock (socket AF_INET SOCK_STREAM 0)))
-        ;; Allow port reuse
-        (setsockopt sock SOL_SOCKET SO_REUSEADDR 1)
-        ;; Bind to port
-        (bind sock AF_INET INADDR_LOOPBACK (nrepl-server-port server))
-        ;; Get actual port (if 0 was specified)
-        (let ((actual-port (sockaddr:port (getsockname sock))))
-          (set-nrepl-server-port! server actual-port)
-          ;; Listen for connections
-          (listen sock 5)
-          (set-nrepl-server-socket! server sock)
-          (set-nrepl-server-running?! server #t)
-          ;; Write port file
-          (write-port-file actual-port)
-          ;; Print startup message
-          (startup-message (nrepl-server-host server) actual-port)
-          ;; Start accept thread
-          (let ((thread (call-with-new-thread
-                         (lambda () (accept-loop server)))))
-            (set-nrepl-server-accept-thread! server thread))
-          server)))
+      (let* ((sock        (tcp-server-create (nrepl-server-port server)))
+             (actual-port (tcp-server-local-port sock)))
+        (set-nrepl-server-port!     server actual-port)
+        (set-nrepl-server-socket!   server sock)
+        (set-nrepl-server-running?! server #t)
+        (write-port-file actual-port)
+        (startup-message (nrepl-server-host server) actual-port)
+        (let ((thread (make-thread (lambda () (accept-loop server)))))
+          (thread-start! thread)
+          (set-nrepl-server-accept-thread! server thread))
+        server))
 
     (define (nrepl-server-stop server)
-      "Stop the nREPL server."
       (when (nrepl-server-running? server)
         (set-nrepl-server-running?! server #f)
-        ;; Close the server socket
         (when (nrepl-server-socket server)
-          (close-port (nrepl-server-socket server))
+          (tcp-server-close (nrepl-server-socket server))
           (set-nrepl-server-socket! server #f))
-        ;; Delete port file
         (delete-port-file)
-        ;; Clean up sessions
         (clear-all-sessions! (nrepl-server-sessions server))
         server))))
