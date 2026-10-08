@@ -3,11 +3,10 @@ Network REPL for Guile or Gauche.
 
 ## usage
 ```sh
-guile -L . boot.scm
+./nrepl-scm guile
 ```
-
 ```sh
-gosh -I . boot.scm
+./nrepl-scm gauche
 ```
 
 ## test

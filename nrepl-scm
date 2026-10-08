@@ -1,0 +1,9 @@
+#!/bin/sh
+IMPL=$1; shift
+NREPL_PATH=./
+case "$IMPL" in
+    guile)  exec guile -L $NREPL_PATH boot.scm -- "$@" ;;
+    gauche) exec gosh  -I $NREPL_PATH boot.scm     "$@" ;;
+*) echo "usage: nrepl-scm [guile|gauche] [port]" >&2; exit 1 ;;
+esac
+
