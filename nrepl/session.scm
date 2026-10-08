@@ -30,9 +30,43 @@
                   hash-set!
                   hash-remove!
                   hash-map->list
-                  hash-clear!))))
+                  hash-clear!)))
+   (gauche
+    (import (only (gauche base)
+                  sys-time
+                  sys-getpid
+                  make-hash-table
+                  hash-table-ref/default
+                  hash-table-set!
+                  hash-table-delete!
+                  hash-table-for-each
+                  hash-table-clear!))))
 
   (begin
+
+    (cond-expand
+     (guile
+      (define (ht-make)              (make-hash-table))
+      (define (ht-ref ht key dflt)   (hash-ref ht key dflt))
+      (define (ht-set! ht key val)   (hash-set! ht key val))
+      (define (ht-remove! ht key)    (hash-remove! ht key))
+      (define (ht-for-each ht proc)  (hash-map->list (lambda (k v) (proc k v)) ht))
+      (define (ht-keys ht)           (hash-map->list (lambda (k v) k) ht))
+      (define (ht-clear! ht)         (hash-clear! ht))
+      (define (now-seconds)          (car (gettimeofday)))
+      (define (process-id)           (getpid))
+      (define default-namespace      "(guile-user)"))
+     (gauche
+      (define (ht-make)              (make-hash-table 'equal?))
+      (define (ht-ref ht key dflt)   (hash-table-ref/default ht key dflt))
+      (define (ht-set! ht key val)   (hash-table-set! ht key val))
+      (define (ht-remove! ht key)    (hash-table-delete! ht key))
+      (define (ht-for-each ht proc)  (hash-table-for-each ht proc))
+      (define (ht-keys ht)           (map car (hash-table->alist ht)))
+      (define (ht-clear! ht)         (hash-table-clear! ht))
+      (define (now-seconds)          (sys-time))
+      (define (process-id)           (sys-getpid))
+      (define default-namespace      "gauche.user")))
 
     ;; Session record type
     (define-record-type <session>
@@ -50,74 +84,55 @@
       (counter manager-counter set-manager-counter!))
 
     (define (make-session-manager)
-      "Create a new session manager."
-      (make-session-manager-record (make-hash-table) 0))
+      (make-session-manager-record (ht-make) 0))
 
     (define (generate-session-id manager)
-      "Generate a unique session ID."
       (let* ((count (manager-counter manager))
-             (time (car (gettimeofday)))
-             (pid (getpid))
              (id (string-append
-                  (number->string pid 16)
+                  (number->string (process-id) 16)
                   "-"
-                  (number->string time 16)
+                  (number->string (now-seconds) 16)
                   "-"
                   (number->string count 16))))
         (set-manager-counter! manager (+ count 1))
         id))
 
     (define (create-session! manager)
-      "Create a new session with default bindings."
       (let* ((id (generate-session-id manager))
-             (session (make-session-record id
-                                           "(guile-user)"
-                                           (make-hash-table))))
-        (hash-set! (manager-sessions manager) id session)
+             (session (make-session-record id default-namespace (ht-make))))
+        (ht-set! (manager-sessions manager) id session)
         session))
 
     (define (clone-session! manager session-id)
-      "Clone an existing session or create a new one if session-id is #f."
       (if session-id
-          (let ((existing (hash-ref (manager-sessions manager) session-id #f)))
+          (let ((existing (ht-ref (manager-sessions manager) session-id #f)))
             (if existing
                 (let* ((new-id (generate-session-id manager))
                        (new-session (make-session-record
                                      new-id
                                      (session-namespace existing)
-                                     (make-hash-table))))
-                  ;; Copy bindings
-                  (hash-map->list
-                   (lambda (k v)
-                     (hash-set! (session-bindings new-session) k v))
-                   (session-bindings existing))
-                  (hash-set! (manager-sessions manager) new-id new-session)
+                                     (ht-make))))
+                  (ht-for-each (session-bindings existing)
+                               (lambda (k v) (ht-set! (session-bindings new-session) k v)))
+                  (ht-set! (manager-sessions manager) new-id new-session)
                   new-session)
-                ;; Session not found, create new
                 (create-session! manager)))
-          ;; No session-id, create new
           (create-session! manager)))
 
     (define (close-session! manager session-id)
-      "Close and remove a session."
-      (hash-remove! (manager-sessions manager) session-id))
+      (ht-remove! (manager-sessions manager) session-id))
 
     (define (get-session manager session-id)
-      "Get a session by ID."
-      (hash-ref (manager-sessions manager) session-id #f))
+      (ht-ref (manager-sessions manager) session-id #f))
 
     (define (list-sessions manager)
-      "List all session IDs."
-      (hash-map->list (lambda (k v) k) (manager-sessions manager)))
+      (ht-keys (manager-sessions manager)))
 
     (define (clear-all-sessions! manager)
-      "Remove all sessions."
-      (hash-clear! (manager-sessions manager)))
+      (ht-clear! (manager-sessions manager)))
 
     (define (session-set-binding! session key value)
-      "Set a binding in the session."
-      (hash-set! (session-bindings session) key value))
+      (ht-set! (session-bindings session) key value))
 
     (define (session-get-binding session key default)
-      "Get a binding from the session."
-      (hash-ref (session-bindings session) key default))))
+      (ht-ref (session-bindings session) key default))))
