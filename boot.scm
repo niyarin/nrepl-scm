@@ -1,4 +1,5 @@
-(use-modules (nrepl cli))
+(import (scheme base)
+        (scheme process-context)
+        (nrepl cli))
 
-(define (main args)
-  ((@ (nrepl cli) main) args))
+(main (command-line))

@@ -8,16 +8,8 @@
 
   (import (scheme base)
           (scheme process-context)
+          (srfi 18)
           (nrepl server))
-
-  (cond-expand
-   (guile
-    (import (only (guile)
-                  sleep
-                  string->number
-                  current-output-port
-                  display
-                  newline))))
 
   (begin
 
@@ -34,7 +26,7 @@
       (let ((server (make-nrepl-server port)))
         (nrepl-server-start server)
         (let loop ()
-          (sleep 1)
+          (thread-sleep! 1)
           (when (nrepl-server-running? server)
             (loop)))
         (nrepl-server-stop server)))
