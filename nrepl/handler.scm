@@ -18,11 +18,11 @@
    (guile
     (import (only (guile)
                   resolve-module
+                  resolve-interface
                   module-ref
                   current-module
                   set-current-module
-                  current-error-port
-                  format call-with-output-string
+                  call-with-output-string
                   call-with-input-string
                   with-exception-handler
                   interaction-environment
@@ -130,6 +130,7 @@
       "Handle 'eval' op - evaluate code."
       (let* ((id (alist-get "id" request #f))
              (sess-id (alist-get "session" request #f))
+             (ns (alist-get "ns" request #f))
              (code (alist-get "code" request ""))
              (session (if sess-id
                           (get-session manager sess-id)
@@ -151,7 +152,7 @@
                                           (lambda (p) (display exn p))))
                 "done")))
           (lambda ()
-            (let* ((result (eval-string-in-session code session))
+            (let* ((result (eval-string-in-session code session ns))
                    (value-str (call-with-output-string
                                (lambda (p)
                                  (write result p)))))
@@ -165,9 +166,29 @@
                 "done"))))
           #:unwind? #t)))
 
-    (define (eval-string-in-session code session)
+    (define (namespace->module ns-name)
+      "Resolve an nREPL namespace string to its Guile implementation module."
+      (let ((library-name
+             (call-with-input-string ns-name
+               (lambda (port)
+                 (let ((name (read port)))
+                   (unless (and (list? name)
+                                (not (null? name))
+                                (every symbol? name)
+                                (eof-object? (read port)))
+                     (error "Invalid Scheme library name" ns-name))
+                   name)))))
+        ;; resolve-interface loads the R7RS library and verifies that it exists;
+        ;; resolve-module then returns the implementation module needed by eval.
+        (resolve-interface library-name)
+        (resolve-module library-name)))
+
+    (define (eval-string-in-session code session requested-ns)
       "Evaluate code string in session context."
-      (let ((ns-name (session-namespace session)))
+      (let* ((ns-name (or requested-ns (session-namespace session)))
+             (module (namespace->module ns-name)))
+        (when requested-ns
+          (session-set-namespace! session requested-ns))
         ;; Read and evaluate the code
         (call-with-input-string code
           (lambda (port)
@@ -175,12 +196,13 @@
               (let ((expr (read port)))
                 (if (eof-object? expr)
                     result
-                    (loop (eval expr (interaction-environment))))))))))
+                    (loop (eval expr module)))))))))
 
     (define (handle-load-file manager request)
       "Handle 'load-file' op - load a file."
       (let* ((id (alist-get "id" request #f))
              (sess-id (alist-get "session" request #f))
+             (ns (alist-get "ns" request #f))
              (file-content (alist-get "file" request ""))
              (file-name (alist-get "file-name" request "unknown"))
              (file-path (alist-get "file-path" request "")))
@@ -188,6 +210,7 @@
         (handle-eval manager
                      (list (cons "id" id)
                            (cons "session" sess-id)
+                           (cons "ns" ns)
                            (cons "code" file-content)))))
 
     (define (handle-completions manager request)
