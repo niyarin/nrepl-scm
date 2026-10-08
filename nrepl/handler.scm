@@ -8,25 +8,14 @@
           guile-nrepl-version)
 
   (import (scheme base)
-          (scheme read)
           (scheme write)
-          (scheme eval)
           (srfi 1)
-          (nrepl session))
+          (nrepl session)
+          (nrepl eval))
 
   (cond-expand
    (guile
     (import (only (guile)
-                  resolve-module
-                  resolve-interface
-                  module-ref
-                  current-module
-                  set-current-module
-                  call-with-output-string
-                  call-with-input-string
-                  with-exception-handler
-                  interaction-environment
-                  *unspecified*
                   getcwd
                   %load-path
                   version))))
@@ -135,68 +124,24 @@
              (session (if sess-id
                           (get-session manager sess-id)
                           #f)))
-        ;; If no session, create one
         (unless session
           (set! session (create-session! manager))
           (set! sess-id (session-id session)))
-
-        (with-exception-handler
-            (lambda (exn)
-              ;; Return error response
-              (list
-               (with-status
-                (make-response id sess-id
-                               "ex" (call-with-output-string
-                                     (lambda (p) (display exn p)))
-                               "root-ex" (call-with-output-string
-                                          (lambda (p) (display exn p))))
-                "done")))
-          (lambda ()
-            (let* ((result (eval-string-in-session code session ns))
-                   (value-str (call-with-output-string
-                               (lambda (p)
-                                 (write result p)))))
-              ;; Return success response
-              (list
+        (let ((result (eval-in-session code session ns)))
+          (case (car result)
+            ((ok)
+             (list
+              (make-response id sess-id
+                             "value" (cdr result)
+                             "ns" (session-namespace session))
+              (with-status (make-response id sess-id) "done")))
+            ((error)
+             (list
+              (with-status
                (make-response id sess-id
-                              "value" value-str
-                              "ns" (session-namespace session))
-               (with-status
-                (make-response id sess-id)
-                "done"))))
-          #:unwind? #t)))
-
-    (define (namespace->module ns-name)
-      "Resolve an nREPL namespace string to its Guile implementation module."
-      (let ((library-name
-             (call-with-input-string ns-name
-               (lambda (port)
-                 (let ((name (read port)))
-                   (unless (and (list? name)
-                                (not (null? name))
-                                (every symbol? name)
-                                (eof-object? (read port)))
-                     (error "Invalid Scheme library name" ns-name))
-                   name)))))
-        ;; resolve-interface loads the R7RS library and verifies that it exists;
-        ;; resolve-module then returns the implementation module needed by eval.
-        (resolve-interface library-name)
-        (resolve-module library-name)))
-
-    (define (eval-string-in-session code session requested-ns)
-      "Evaluate code string in session context."
-      (let* ((ns-name (or requested-ns (session-namespace session)))
-             (module (namespace->module ns-name)))
-        (when requested-ns
-          (session-set-namespace! session requested-ns))
-        ;; Read and evaluate the code
-        (call-with-input-string code
-          (lambda (port)
-            (let loop ((result *unspecified*))
-              (let ((expr (read port)))
-                (if (eof-object? expr)
-                    result
-                    (loop (eval expr module)))))))))
+                              "ex" (cdr result)
+                              "root-ex" (cdr result))
+               "done")))))))
 
     (define (handle-load-file manager request)
       "Handle 'load-file' op - load a file."
